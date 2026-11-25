@@ -1,68 +1,50 @@
-import 'package:flutter/material.dart';
-import '../models/province.dart';
+import 'package:flutter/foundation.dart';
+
 import '../models/city.dart';
 import '../models/cost.dart';
+import '../models/district.dart';
+import '../models/province.dart';
 import '../services/service_rajaongkir.dart';
 
+class ShippingLocation {
+  Province? province;
+  City? city;
+  District? district;
+  List<City> cities = [];
+  List<District> districts = [];
+  bool isLoading = false;
+  String? error;
+  Object? _request;
+
+  void _clearDistricts() {
+    district = null;
+    districts = [];
+    error = null;
+    isLoading = false;
+    _request = null;
+  }
+}
+
 class OngkirProvider with ChangeNotifier {
-  final RajaOngkirService _service = RajaOngkirService();
+  OngkirProvider({RajaOngkirService? service})
+    : _service = service ?? RajaOngkirService();
 
-  // ================================
-  // DATA LISTS
-  // ================================
-  List<Province> _provinces = [];
-  List<City> _originCities = [];
-  List<City> _destinationCities = [];
-  List<ShippingCost> _costs = [];
+  final RajaOngkirService _service;
+  final origin = ShippingLocation();
+  final destination = ShippingLocation();
 
-  // ================================
-  // SELECTED VALUES
-  // ================================
-  Province? _selectedOriginProvince;
-  City? _selectedOriginCity;
-  Province? _selectedDestProvince;
-  City? _selectedDestCity;
-  Courier? _selectedCourier;
-  int _weight = 1000;
+  List<Province> provinces = [];
+  List<ShippingCost> costs = [];
+  Courier? selectedCourier;
+  ShippingCost? selectedCost;
+  int? weight = 1000;
+  bool isLoadingProvinces = false;
+  bool isLoadingCosts = false;
+  String? provinceError;
+  bool _disposed = false;
+  Object? _costRequest;
 
-  // Paket pengiriman terpilih
-  ShippingCost? _selectedCost;
-
-  // ================================
-  // LOADING STATES
-  // ================================
-  bool _isLoadingProvinces = false;
-  bool _isLoadingOriginCities = false;
-  bool _isLoadingDestCities = false;
-  bool _isLoadingCosts = false;
-
-  // ================================
-  // GETTERS
-  // ================================
-  List<Province> get provinces => _provinces;
-  List<City> get originCities => _originCities;
-  List<City> get destinationCities => _destinationCities;
-  List<ShippingCost> get costs => _costs;
-
-  Province? get selectedOriginProvince => _selectedOriginProvince;
-  City? get selectedOriginCity => _selectedOriginCity;
-  Province? get selectedDestProvince => _selectedDestProvince;
-  City? get selectedDestCity => _selectedDestCity;
-  Courier? get selectedCourier => _selectedCourier;
-  int get weight => _weight;
-
-  ShippingCost? get selectedCost => _selectedCost;
-
-  bool get isLoadingProvinces => _isLoadingProvinces;
-  bool get isLoadingOriginCities => _isLoadingOriginCities;
-  bool get isLoadingDestCities => _isLoadingDestCities;
-  bool get isLoadingCosts => _isLoadingCosts;
-
-  // ================================
-  // AVAILABLE COURIERS (UNTUK DROPDOWN)
-  // ================================
-  // Sesuaikan dengan daftar kurir yang didukung endpoint calculate cost.
-  final List<Courier> couriers = [
+  final couriers = [
     Courier(code: 'jne', name: 'JNE'),
     Courier(code: 'pos', name: 'POS Indonesia'),
     Courier(code: 'tiki', name: 'TIKI'),
@@ -72,164 +54,180 @@ class OngkirProvider with ChangeNotifier {
     Courier(code: 'jnt', name: 'J&T'),
   ];
 
-  // ================================
-  // FETCH PROVINCES
-  // ================================
   Future<void> fetchProvinces() async {
-    _isLoadingProvinces = true;
+    if (isLoadingProvinces) return;
+    isLoadingProvinces = true;
+    provinceError = null;
     notifyListeners();
 
     try {
-      _provinces = await _service.getProvinces();
-    } catch (e) {
-      print('Error fetching provinces: $e');
-      _provinces = [];
+      final items = await _service.getProvinces();
+      if (!_disposed) provinces = items;
+    } on Exception catch (error) {
+      provinceError = _message(error, 'Gagal memuat provinsi.');
     } finally {
-      _isLoadingProvinces = false;
-      notifyListeners();
+      isLoadingProvinces = false;
+      if (!_disposed) notifyListeners();
     }
   }
 
-  // ================================
-  // FETCH ORIGIN CITIES
-  // ================================
-  Future<void> fetchOriginCities(String provinceId) async {
-    _isLoadingOriginCities = true;
-    notifyListeners();
+  Future<void> setProvince(
+    ShippingLocation location,
+    Province? province,
+  ) async {
+    location.province = province;
+    location.city = null;
+    location.cities = [];
+    location._clearDistricts();
+    _clearCosts();
 
-    try {
-      _originCities = await _service.getCities(provinceId);
-    } catch (e) {
-      print('Error fetching origin cities: $e');
-      _originCities = [];
-    } finally {
-      _isLoadingOriginCities = false;
-      notifyListeners();
-    }
+    await _loadLocation(
+      location,
+      province == null
+          ? null
+          : () async {
+              final cities = await _service.getCities(province.provinceId);
+              return () => location.cities = cities;
+            },
+      'Gagal memuat kota.',
+    );
   }
 
-  // ================================
-  // FETCH DESTINATION CITIES
-  // ================================
-  Future<void> fetchDestinationCities(String provinceId) async {
-    _isLoadingDestCities = true;
-    notifyListeners();
+  Future<void> setCity(ShippingLocation location, City? city) async {
+    location.city = city;
+    location._clearDistricts();
+    _clearCosts();
 
-    try {
-      _destinationCities = await _service.getCities(provinceId);
-    } catch (e) {
-      print('Error fetching destination cities: $e');
-      _destinationCities = [];
-    } finally {
-      _isLoadingDestCities = false;
-      notifyListeners();
-    }
+    await _loadLocation(
+      location,
+      city == null
+          ? null
+          : () async {
+              final districts = await _service.getDistricts(city.id);
+              return () => location.districts = districts;
+            },
+      'Gagal memuat kecamatan.',
+    );
   }
 
-  // ================================
-  // CHECK SHIPPING COST
-  // ================================
-  Future<String?> checkShippingCost() async {
-    if (_selectedOriginCity == null ||
-        _selectedDestCity == null ||
-        _selectedCourier == null) {
-      return 'Mohon lengkapi provinsi, kota asal, kota tujuan, dan kurir.';
-    }
-
-    _isLoadingCosts = true;
-    _costs = [];
-    _selectedCost = null;
+  Future<void> _loadLocation(
+    ShippingLocation location,
+    Future<VoidCallback> Function()? load,
+    String errorMessage,
+  ) async {
+    final request = Object();
+    location._request = request;
+    location.isLoading = load != null;
     notifyListeners();
+    if (load == null) return;
 
     try {
-      _costs = await _service.checkCost(
-        origin: _selectedOriginCity!.id, // id district asal
-        destination: _selectedDestCity!.id, // id district tujuan
-        weight: _weight,
-        courier: _selectedCourier!.code,
-      );
-
-      if (_costs.isNotEmpty) {
-        _selectedCost = _costs.first;
+      final apply = await load();
+      if (!_disposed && location._request == request) apply();
+    } on Exception catch (error) {
+      if (!_disposed && location._request == request) {
+        location.error = _message(error, errorMessage);
       }
-
-      return null; // sukses, tidak ada error
-    } catch (e) {
-      print('Error checkShippingCost: $e');
-      return 'Error: $e';
     } finally {
-      _isLoadingCosts = false;
-      notifyListeners();
+      if (!_disposed && location._request == request) {
+        location.isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
-  // ================================
-  // SETTERS / UPDATERS
-  // ================================
-  void setOriginProvince(Province? province) {
-    _selectedOriginProvince = province;
-    _selectedOriginCity = null;
-    _originCities = [];
-    notifyListeners();
-
-    if (province != null) {
-      fetchOriginCities(province.provinceId);
-    }
-  }
-
-  void setOriginCity(City? city) {
-    _selectedOriginCity = city;
-    notifyListeners();
-  }
-
-  void setDestProvince(Province? province) {
-    _selectedDestProvince = province;
-    _selectedDestCity = null;
-    _destinationCities = [];
-    notifyListeners();
-
-    if (province != null) {
-      fetchDestinationCities(province.provinceId);
-    }
-  }
-
-  void setDestCity(City? city) {
-    _selectedDestCity = city;
+  void setDistrict(ShippingLocation location, District? district) {
+    location.district = district;
+    _clearCosts();
     notifyListeners();
   }
 
   void setCourier(Courier? courier) {
-    _selectedCourier = courier;
+    selectedCourier = courier;
+    _clearCosts();
     notifyListeners();
   }
 
-  void setWeight(int weight) {
-    // jaga-jaga kalau user isi 0 atau negatif
-    _weight = weight <= 0 ? 1 : weight;
+  void setWeight(int? grams) {
+    weight = grams;
+    _clearCosts();
     notifyListeners();
   }
 
   void setSelectedCost(ShippingCost? cost) {
-    _selectedCost = cost;
+    selectedCost = cost;
     notifyListeners();
   }
 
-  // ================================
-  // RESET SEMUA FORM
-  // ================================
-  void reset() {
-    _selectedOriginProvince = null;
-    _selectedOriginCity = null;
-    _selectedDestProvince = null;
-    _selectedDestCity = null;
-    _selectedCourier = null;
-    _selectedCost = null;
+  Future<String?> checkShippingCost() async {
+    final grams = weight;
+    final originId = origin.district?.id;
+    final destinationId = destination.district?.id;
+    final courier = selectedCourier;
 
-    _weight = 1000;
-    _originCities = [];
-    _destinationCities = [];
-    _costs = [];
+    if (grams == null || grams < 1) {
+      return 'Masukkan berat paket dalam gram, minimal 1.';
+    }
+    if (originId == null || destinationId == null || courier == null) {
+      return 'Pilih kecamatan asal, kecamatan tujuan, dan kurir.';
+    }
 
+    _clearCosts();
+    final request = Object();
+    _costRequest = request;
+    isLoadingCosts = true;
     notifyListeners();
+
+    try {
+      final results = await _service.checkCost(
+        originDistrictId: originId,
+        destinationDistrictId: destinationId,
+        weight: grams,
+        courier: courier.code,
+      );
+      if (_disposed || _costRequest != request) return null;
+      costs = results;
+      selectedCost = costs.firstOrNull;
+      return costs.isEmpty
+          ? 'Layanan kurir tidak tersedia untuk rute ini.'
+          : null;
+    } on Exception catch (error) {
+      if (_disposed || _costRequest != request) return null;
+      return _message(error, 'Gagal mengecek ongkir.');
+    } finally {
+      if (!_disposed && _costRequest == request) {
+        isLoadingCosts = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void _clearCosts() {
+    _costRequest = null;
+    isLoadingCosts = false;
+    costs = [];
+    selectedCost = null;
+  }
+
+  void reset() {
+    for (final location in [origin, destination]) {
+      location.province = null;
+      location.city = null;
+      location.cities = [];
+      location._clearDistricts();
+    }
+    selectedCourier = null;
+    weight = 1000;
+    _clearCosts();
+    notifyListeners();
+  }
+
+  String _message(Exception error, String fallback) =>
+      error is RajaOngkirException ? error.message : fallback;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }

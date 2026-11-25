@@ -1,3 +1,8 @@
+String formatShippingNumber(int value) => value.toString().replaceAllMapped(
+  RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+  (match) => '${match[1]}.',
+);
+
 class ShippingCost {
   final String courierName; // "Lion Parcel"
   final String courierCode; // "lion"
@@ -21,16 +26,12 @@ class ShippingCost {
       courierCode: json['code'] ?? '',
       service: json['service'] ?? '',
       description: json['description'] ?? '',
-      cost: (json['cost'] ?? 0) is int
-          ? json['cost']
-          : int.tryParse(json['cost'].toString()) ?? 0,
+      cost: int.parse(json['cost'].toString()),
       etd: json['etd']?.toString() ?? '',
     );
   }
 
-  String get formattedPrice {
-    return 'Rp ${cost.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]}.')}';
-  }
+  String get formattedPrice => 'Rp ${formatShippingNumber(cost)}';
 
   String get label {
     final etdText = etd.isEmpty ? '-' : etd;

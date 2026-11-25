@@ -1,109 +1,116 @@
-import 'package:http/http.dart' as http;
 import 'dart:convert';
-import '../models/province.dart';
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+
 import '../models/city.dart';
 import '../models/cost.dart';
+import '../models/district.dart';
+import '../models/province.dart';
 
 class RajaOngkirService {
-  static const String _apiKey = 'API_KEY';
-  static const String _baseUrl =
-      'https://rajaongkir.komerce.id/api/v1/destination';
+  RajaOngkirService({this.client, String? apiKey})
+    : _apiKey = (apiKey ?? const String.fromEnvironment('RAJAONGKIR_API_KEY'))
+          .trim();
 
-  // Get all provinces
-  Future<List<Province>> getProvinces() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/province'),
-        headers: {'key': _apiKey},
+  final http.Client? client;
+  final String _apiKey;
+  static const _baseUrl = kIsWeb
+      ? 'http://127.0.0.1:8091'
+      : 'https://rajaongkir.komerce.id/api/v1';
+  static const _timeout = Duration(seconds: 15);
+
+  Map<String, String> get _headers {
+    if (kIsWeb) return const {};
+    if (_apiKey.isEmpty) {
+      throw const RajaOngkirException(
+        'Konfigurasi RAJAONGKIR_API_KEY belum diisi.',
       );
-
-      if (response.statusCode == 200) {
-        final decoded = json.decode(response.body) as Map<String, dynamic>;
-
-        final results = decoded['data'] as List<dynamic>; // <-- pakai "data"
-
-        return results
-            .map((item) => Province.fromJson(item as Map<String, dynamic>))
-            .toList();
-      } else {
-        throw Exception('Failed to load provinces: ${response.statusCode}');
-      }
-    } catch (e) {
-      throw Exception('Error: $e');
     }
+    return {'key': _apiKey};
   }
 
-  // Get cities by province
-  Future<List<City>> getCities(String provinceId) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/city/$provinceId'),
-        headers: {'key': _apiKey},
-      );
+  Future<List<Province>> getProvinces() => _get('province', Province.fromJson);
 
-      if (response.statusCode == 200) {
-        final decoded = json.decode(response.body) as Map<String, dynamic>;
-        final results = decoded['data'] as List<dynamic>;
+  Future<List<City>> getCities(String provinceId) =>
+      _get('city/$provinceId', City.fromJson);
 
-        return results
-            .map((json) => City.fromJson(json as Map<String, dynamic>))
-            .toList();
-      } else {
-        throw Exception('Failed to load cities');
-      }
-    } catch (e) {
-      throw Exception('Error: $e');
-    }
+  Future<List<District>> getDistricts(String cityId) =>
+      _get('district/$cityId', District.fromJson);
+
+  Future<List<T>> _get<T>(
+    String path,
+    T Function(Map<String, dynamic>) fromJson,
+  ) async {
+    final uri = Uri.parse('$_baseUrl/destination/$path');
+    final headers = _headers;
+    final response = await _send(
+      () =>
+          (client?.get(uri, headers: headers) ??
+          http.get(uri, headers: headers)),
+    );
+    return _decode(response, fromJson);
   }
-
-  // Check shipping cost
-  static const String _costUrl =
-      'https://rajaongkir.komerce.id/api/v1/calculate/district/domestic-cost';
 
   Future<List<ShippingCost>> checkCost({
-    required String origin,
-    required String destination,
+    required String originDistrictId,
+    required String destinationDistrictId,
     required int weight,
     required String courier,
   }) async {
+    final uri = Uri.parse('$_baseUrl/calculate/district/domestic-cost');
+    final headers = _headers;
+    final body = {
+      'origin': originDistrictId,
+      'destination': destinationDistrictId,
+      'weight': weight.toString(),
+      'courier': courier,
+      'price': 'lowest',
+    };
+    final response = await _send(
+      () =>
+          (client?.post(uri, headers: headers, body: body) ??
+          http.post(uri, headers: headers, body: body)),
+    );
+    return _decode(response, ShippingCost.fromJson);
+  }
+
+  Future<http.Response> _send(Future<http.Response> Function() request) async {
     try {
-      final response = await http.post(
-        Uri.parse(_costUrl),
-        headers: {
-          'key': _apiKey,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          'origin': origin,
-          'destination': destination,
-          'weight': weight.toString(),
-          // di docs bisa kirim banyak kurir pakai ":".
-          // kirim satu kurir yang dipilih user.
-          'courier': courier,
-          // atau "lowest" untuk permintaan hanya harga terendah per kurir.
-          'price': 'lowest', // atau 'lowest' sesuai kebutuhanmu
-        },
+      return await request().timeout(_timeout);
+    } on http.ClientException {
+      throw RajaOngkirException(
+        kIsWeb
+            ? 'Proxy RajaOngkir tidak terjangkau. Jalankan proxy lokal dan buka aplikasi di http://localhost:8090.'
+            : 'Koneksi ke RajaOngkir gagal.',
       );
-
-      print('Status code (cost): ${response.statusCode}');
-      print('Body (cost): ${response.body}');
-
-      if (response.statusCode == 200) {
-        final decoded = json.decode(response.body) as Map<String, dynamic>;
-        final results = decoded['data'] as List<dynamic>;
-
-        // Filter supaya hanya opsi dari kurir yang dipilih
-        final options = results
-            .map((e) => ShippingCost.fromJson(e as Map<String, dynamic>))
-            .where((opt) => opt.courierCode == courier)
-            .toList();
-
-        return options;
-      } else {
-        throw Exception('Failed to check cost: ${response.statusCode}');
-      }
-    } catch (e) {
-      throw Exception('Error: $e');
     }
   }
+
+  List<T> _decode<T>(
+    http.Response response,
+    T Function(Map<String, dynamic>) fromJson,
+  ) {
+    if (response.statusCode != 200) {
+      throw RajaOngkirException(
+        'RajaOngkir mengembalikan HTTP ${response.statusCode}.',
+      );
+    }
+    final payload = jsonDecode(utf8.decode(response.bodyBytes));
+    if (payload case {'data': final List<dynamic> data}) {
+      return data.map((item) {
+        if (item is! Map<String, dynamic>) {
+          throw const FormatException('Format data RajaOngkir tidak valid.');
+        }
+        return fromJson(item);
+      }).toList();
+    }
+    throw const FormatException('Format respons RajaOngkir tidak valid.');
+  }
+}
+
+class RajaOngkirException implements Exception {
+  const RajaOngkirException(this.message);
+
+  final String message;
 }

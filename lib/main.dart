@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import 'providers/ongkir_providers.dart';
 import 'pages/cek_ongkir.dart';
 
 void main() {
-  runApp(MyApp());
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
@@ -18,7 +20,7 @@ class MyApp extends StatelessWidget {
           primarySwatch: Colors.blue,
           visualDensity: VisualDensity.adaptivePlatformDensity,
         ),
-        home: CekOngkirScreen(),
+        home: const CekOngkirScreen(),
         debugShowCheckedModeBanner: false,
       ),
     );

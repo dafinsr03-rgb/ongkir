@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:dropdown_search/dropdown_search.dart';
+
 import '../providers/ongkir_providers.dart';
 import '../models/province.dart';
 import '../models/city.dart';
+import '../models/district.dart';
 import '../models/cost.dart';
 
 class CekOngkirScreen extends StatefulWidget {
+  const CekOngkirScreen({super.key});
+
   @override
-  _CekOngkirScreenState createState() => _CekOngkirScreenState();
+  State<CekOngkirScreen> createState() => _CekOngkirScreenState();
 }
 
 class _CekOngkirScreenState extends State<CekOngkirScreen> {
@@ -20,7 +24,7 @@ class _CekOngkirScreenState extends State<CekOngkirScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<OngkirProvider>().fetchProvinces();
+      if (mounted) context.read<OngkirProvider>().fetchProvinces();
     });
   }
 
@@ -54,11 +58,21 @@ class _CekOngkirScreenState extends State<CekOngkirScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildOriginSection(provider),
+                if (provider.isLoadingProvinces)
+                  const LinearProgressIndicator(),
+                if (provider.provinceError case final message?)
+                  ListTile(
+                    title: Text(message),
+                    trailing: TextButton(
+                      onPressed: provider.fetchProvinces,
+                      child: const Text('Coba lagi'),
+                    ),
+                  ),
+                _buildLocation(provider, provider.origin, isOrigin: true),
                 SizedBox(height: 24),
                 Divider(),
                 SizedBox(height: 24),
-                _buildDestinationSection(provider),
+                _buildLocation(provider, provider.destination, isOrigin: false),
                 SizedBox(height: 24),
                 Divider(),
                 SizedBox(height: 24),
@@ -75,199 +89,101 @@ class _CekOngkirScreenState extends State<CekOngkirScreen> {
     );
   }
 
-  Widget _buildOriginSection(OngkirProvider provider) {
+  Widget _buildLocation(
+    OngkirProvider provider,
+    ShippingLocation location, {
+    required bool isOrigin,
+  }) {
+    final label = isOrigin ? 'Asal' : 'Tujuan';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(Icons.location_on, color: Colors.blue),
-            SizedBox(width: 8),
+            Icon(
+              isOrigin ? Icons.location_on : Icons.place,
+              color: isOrigin ? Colors.blue : Colors.green,
+            ),
+            const SizedBox(width: 8),
             Text(
-              'Dari',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              isOrigin ? 'Dari' : 'Ke',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ],
         ),
-        SizedBox(height: 12),
-        DropdownSearch<Province>(
+        const SizedBox(height: 12),
+        _locationDropdown<Province>(
+          label: 'Provinsi $label',
+          icon: Icons.map,
           items: provider.provinces,
-          selectedItem: provider.selectedOriginProvince,
-          onChanged: provider.setOriginProvince,
-          dropdownDecoratorProps: DropDownDecoratorProps(
-            dropdownSearchDecoration: InputDecoration(
-              labelText: 'Provinsi Asal',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.map),
-            ),
-          ),
-          popupProps: PopupProps.modalBottomSheet(
-            showSearchBox: true,
-            searchFieldProps: TextFieldProps(
-              decoration: InputDecoration(
-                hintText: 'Cari provinsi...',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            modalBottomSheetProps: ModalBottomSheetProps(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-            ),
-            itemBuilder: (context, item, isSelected) {
-              return ListTile(title: Text(item.province), selected: isSelected);
-            },
-          ),
-          filterFn: (item, filter) =>
-              item.province.toLowerCase().contains(filter.toLowerCase()),
+          selected: location.province,
+          onChanged: (value) => provider.setProvince(location, value),
         ),
-        SizedBox(height: 12),
-        DropdownSearch<City>(
-          items: provider.originCities,
-          selectedItem: provider.selectedOriginCity,
-          enabled: provider.originCities.isNotEmpty,
-          onChanged: provider.setOriginCity,
-          dropdownDecoratorProps: DropDownDecoratorProps(
-            dropdownSearchDecoration: InputDecoration(
-              labelText: 'Kota Asal',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.location_city),
-            ),
-          ),
-          popupProps: PopupProps.modalBottomSheet(
-            showSearchBox: true,
-            searchFieldProps: TextFieldProps(
-              decoration: InputDecoration(
-                hintText: 'Cari kota...',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            modalBottomSheetProps: ModalBottomSheetProps(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-            ),
-            itemBuilder: (context, item, isSelected) {
-              return ListTile(
-                title: Text(item.fullName),
-                subtitle: Text('Kode Pos: ${item.zipCode}'),
-                selected: isSelected,
-              );
-            },
-            emptyBuilder: (context, searchEntry) => Center(
-              child: Padding(
-                padding: EdgeInsets.all(20),
-                child: Text(
-                  'Pilih provinsi terlebih dahulu',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ),
-            ),
-          ),
-          filterFn: (item, filter) =>
-              item.fullName.toLowerCase().contains(filter.toLowerCase()),
+        const SizedBox(height: 12),
+        _locationDropdown<City>(
+          label: 'Kota $label',
+          prerequisite: location.province == null
+              ? 'Pilih provinsi dahulu'
+              : null,
+          icon: Icons.location_city,
+          items: location.cities,
+          selected: location.city,
+          onChanged: (value) => provider.setCity(location, value),
         ),
+        const SizedBox(height: 12),
+        _locationDropdown<District>(
+          label: 'Kecamatan $label',
+          prerequisite: location.city == null ? 'Pilih kota dahulu' : null,
+          icon: Icons.place_outlined,
+          items: location.districts,
+          selected: location.district,
+          onChanged: (value) => provider.setDistrict(location, value),
+        ),
+        if (location.isLoading) const LinearProgressIndicator(),
+        if (location.error case final message?)
+          ListTile(
+            title: Text(message),
+            trailing: TextButton(
+              onPressed: () => location.city == null
+                  ? provider.setProvince(location, location.province)
+                  : provider.setCity(location, location.city),
+              child: const Text('Coba lagi'),
+            ),
+          ),
       ],
     );
   }
 
-  Widget _buildDestinationSection(OngkirProvider provider) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.place, color: Colors.green),
-            SizedBox(width: 8),
-            Text(
-              'Ke',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-          ],
+  Widget _locationDropdown<T>({
+    required String label,
+    required IconData icon,
+    required List<T> items,
+    required T? selected,
+    required ValueChanged<T?> onChanged,
+    String? prerequisite,
+  }) {
+    return DropdownSearch<T>(
+      items: items,
+      selectedItem: selected,
+      enabled: items.isNotEmpty,
+      onChanged: onChanged,
+      dropdownDecoratorProps: DropDownDecoratorProps(
+        dropdownSearchDecoration: InputDecoration(
+          labelText: label,
+          helperText: prerequisite,
+          border: const OutlineInputBorder(),
+          prefixIcon: Icon(icon),
         ),
-        SizedBox(height: 12),
-        DropdownSearch<Province>(
-          items: provider.provinces,
-          selectedItem: provider.selectedDestProvince,
-          onChanged: provider.setDestProvince,
-          dropdownDecoratorProps: DropDownDecoratorProps(
-            dropdownSearchDecoration: InputDecoration(
-              labelText: 'Provinsi Tujuan',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.map),
-            ),
+      ),
+      popupProps: PopupProps.modalBottomSheet(
+        showSearchBox: true,
+        searchFieldProps: TextFieldProps(
+          decoration: InputDecoration(
+            hintText: 'Cari $label',
+            prefixIcon: const Icon(Icons.search),
           ),
-          popupProps: PopupProps.modalBottomSheet(
-            showSearchBox: true,
-            searchFieldProps: TextFieldProps(
-              decoration: InputDecoration(
-                hintText: 'Cari provinsi...',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            modalBottomSheetProps: ModalBottomSheetProps(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-            ),
-            itemBuilder: (context, item, isSelected) {
-              return ListTile(title: Text(item.province), selected: isSelected);
-            },
-          ),
-          filterFn: (item, filter) =>
-              item.province.toLowerCase().contains(filter.toLowerCase()),
         ),
-        SizedBox(height: 12),
-        DropdownSearch<City>(
-          items: provider.destinationCities,
-          selectedItem: provider.selectedDestCity,
-          enabled: provider.destinationCities.isNotEmpty,
-          onChanged: provider.setDestCity,
-          dropdownDecoratorProps: DropDownDecoratorProps(
-            dropdownSearchDecoration: InputDecoration(
-              labelText: 'Kota Tujuan',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.location_city),
-            ),
-          ),
-          popupProps: PopupProps.modalBottomSheet(
-            showSearchBox: true,
-            searchFieldProps: TextFieldProps(
-              decoration: InputDecoration(
-                hintText: 'Cari kota...',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            modalBottomSheetProps: ModalBottomSheetProps(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-            ),
-            itemBuilder: (context, item, isSelected) {
-              return ListTile(
-                title: Text(item.fullName),
-                subtitle: Text('Kode Pos: ${item.zipCode}'),
-                selected: isSelected,
-              );
-            },
-            emptyBuilder: (context, searchEntry) => Center(
-              child: Padding(
-                padding: EdgeInsets.all(20),
-                child: Text(
-                  'Pilih provinsi terlebih dahulu',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ),
-            ),
-          ),
-          filterFn: (item, filter) =>
-              item.fullName.toLowerCase().contains(filter.toLowerCase()),
-        ),
-      ],
+      ),
     );
   }
 
@@ -281,10 +197,16 @@ class _CekOngkirScreenState extends State<CekOngkirScreen> {
             border: OutlineInputBorder(),
             prefixIcon: Icon(Icons.scale),
             helperText: 'Minimal 1 gram',
+            errorText: provider.weight == null || provider.weight! < 1
+                ? 'Masukkan bilangan bulat positif'
+                : null,
           ),
           keyboardType: TextInputType.number,
           onChanged: (value) {
-            final weight = int.tryParse(value) ?? 1000;
+            final grams = value.trim();
+            final weight = RegExp(r'^\d+$').hasMatch(grams)
+                ? int.tryParse(grams)
+                : null;
             provider.setWeight(weight);
           },
         ),
@@ -327,7 +249,7 @@ class _CekOngkirScreenState extends State<CekOngkirScreen> {
             ? null
             : () async {
                 final error = await provider.checkShippingCost();
-                if (error != null) {
+                if (mounted && error != null) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text(error), backgroundColor: Colors.red),
                   );
@@ -355,7 +277,9 @@ class _CekOngkirScreenState extends State<CekOngkirScreen> {
   }
 
   Widget _buildResults(OngkirProvider provider) {
-    if (provider.costs.isEmpty) return SizedBox.shrink();
+    if (provider.costs.isEmpty) return const SizedBox.shrink();
+    final selectedCost = provider.selectedCost;
+    final grams = provider.weight;
 
     return Card(
       elevation: 4,
@@ -370,26 +294,19 @@ class _CekOngkirScreenState extends State<CekOngkirScreen> {
                 Icon(Icons.receipt_long, color: Colors.blue),
                 SizedBox(width: 8),
                 Text(
-                  'Pilih Paket Pengiriman',
+                  'Hasil Perhitungan Ongkir',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
-            SizedBox(height: 4),
-            Text(
-              'Kurir: ${provider.selectedCourier?.name}',
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
-            ),
-            SizedBox(height: 16),
-
-            // 🔽 Dropdown paket (kurir + service)
+            const SizedBox(height: 12),
             DropdownSearch<ShippingCost>(
               items: provider.costs,
               selectedItem: provider.selectedCost,
               onChanged: provider.setSelectedCost,
               dropdownDecoratorProps: DropDownDecoratorProps(
                 dropdownSearchDecoration: InputDecoration(
-                  labelText: 'Pilih Paket',
+                  labelText: 'Pilih Layanan Kurir',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.local_shipping),
                 ),
@@ -424,62 +341,95 @@ class _CekOngkirScreenState extends State<CekOngkirScreen> {
                   item.label.toLowerCase().contains(filter.toLowerCase()),
             ),
 
-            SizedBox(height: 16),
-            if (provider.selectedCost != null) ...[
-              Divider(height: 24),
-              Text(
-                'Detail Paket Terpilih',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue[200]!),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${provider.selectedCost!.courierName} - ${provider.selectedCost!.service}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      provider.selectedCost!.description,
-                      style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'Biaya: ${provider.selectedCost!.formattedPrice}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green[700],
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Estimasi: ${provider.selectedCost!.etd.isEmpty ? '-' : provider.selectedCost!.etd}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.blue[800],
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            if (selectedCost != null && grams != null) ...[
+              const SizedBox(height: 16),
+              _buildCostBreakdown(selectedCost, grams),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildCostBreakdown(ShippingCost selectedCost, int grams) {
+    final total = selectedCost.cost + grams;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue[50],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.blue[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${selectedCost.courierName} - ${selectedCost.service}',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          if (selectedCost.description.isNotEmpty)
+            Text(
+              selectedCost.description,
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          const SizedBox(height: 8),
+          Text(
+            'Estimasi Tiba: ${selectedCost.etd.isEmpty ? '-' : selectedCost.etd}',
+            style: TextStyle(fontSize: 12, color: Colors.blue[800]),
+          ),
+          const Divider(),
+          _buildCostRow(
+            'Ongkir:',
+            '${selectedCost.formattedPrice} (${selectedCost.cost})',
+            valueColor: Colors.green[700],
+          ),
+          const SizedBox(height: 4),
+          _buildCostRow(
+            'Berat Barang:',
+            '${formatShippingNumber(grams)} gram ($grams)',
+          ),
+          const Divider(),
+          _buildCostRow(
+            'Total (Ongkir + Berat):',
+            formatShippingNumber(total),
+            valueColor: Colors.blue[700],
+            emphasize: true,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Rumus: ${selectedCost.cost} + $grams = $total',
+            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCostRow(
+    String label,
+    String value, {
+    Color? valueColor,
+    bool emphasize = false,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(fontWeight: emphasize ? FontWeight.bold : null),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: TextStyle(color: valueColor, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
     );
   }
 }
